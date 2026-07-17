@@ -1,0 +1,91 @@
+{
+  "type": "FeatureCollection",
+  "name": "odjeli",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "sumarija": "Bosanska Krupa",
+        "gospodarska_jedinica": "Risovac",
+        "odjel": "15/1"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [16.13, 44.86], [16.155, 44.86], [16.155, 44.875], [16.13, 44.875], [16.13, 44.86]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "sumarija": "Bosanska Krupa",
+        "gospodarska_jedinica": "Risovac",
+        "odjel": "15/2"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [16.155, 44.86], [16.18, 44.86], [16.18, 44.875], [16.155, 44.875], [16.155, 44.86]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "sumarija": "Bosanska Krupa",
+        "gospodarska_jedinica": "Risovac",
+        "odjel": "16"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [16.13, 44.875], [16.18, 44.875], [16.18, 44.89], [16.13, 44.89], [16.13, 44.875]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "sumarija": "Bosanska Krupa",
+        "gospodarska_jedinica": "Grmeč Jasenica",
+        "odjel": "48"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [16.55, 44.68], [16.59, 44.68], [16.59, 44.70], [16.55, 44.70], [16.55, 44.68]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "sumarija": "Bosanska Krupa",
+        "gospodarska_jedinica": "Grmeč Jasenica",
+        "odjel": "49"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [16.59, 44.68], [16.63, 44.68], [16.63, 44.70], [16.59, 44.70], [16.59, 44.68]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "sumarija": "Bosanska Krupa",
+        "gospodarska_jedinica": "Risovac",
+        "odjel": "Lager Risovac",
+        "lager": true
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [16.18, 44.868], [16.187, 44.868], [16.187, 44.872], [16.18, 44.872], [16.18, 44.868]
+        ]]
+      }
+    }
+  ]
+}
