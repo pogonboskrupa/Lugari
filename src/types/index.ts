@@ -1,6 +1,6 @@
 // ── Domain types ─────────────────────────────────────────────────────────────
 
-export type UserRole = 'admin' | 'foreman' | 'silviculture_foreman' | 'ranger'
+export type UserRole = 'admin' | 'foreman' | 'ranger'
 
 export interface Forestry {
   id: string
@@ -26,6 +26,10 @@ export interface Profile {
   phone: string | null
   active: boolean
   created_at: string
+  /** Login handle for rangers (no email). Null for foreman/admin. */
+  username: string | null
+  /** Foreman this ranger reports to — the source of truth for the foreman↔ranger relationship. */
+  supervisor_id: string | null
   work_unit?: WorkUnit
 }
 

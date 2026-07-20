@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Activity, CheckCircle2, Clock, Route, Users } from 'lucide-react'
+import { Activity, CheckCircle2, Clock, Route, UserPlus, Users } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Dialog } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import {
   Table,
   TableBody,
@@ -13,7 +16,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { useAuthStore } from '@/store/authStore'
-import { getRangersInWorkUnit, getShiftsForDate } from '@/services/dataService'
+import { createRanger, getRangersForSupervisor, getShiftsForDate } from '@/services/dataService'
 import { computeDashboardStats } from '@/services/analyticsService'
 import { loadDepartments, classifyLocation } from '@/services/geoService'
 import { formatDuration, formatKm, formatTime, todayISO } from '@/lib/utils'
@@ -28,18 +31,24 @@ export function ForemanDashboard() {
   const [search, setSearch] = useState('')
   const [date, setDate] = useState(todayISO())
 
-  useEffect(() => {
-    if (!profile) return
-    if (profile.work_unit_id) {
-      void getRangersInWorkUnit(profile.work_unit_id).then(setRangers)
-    }
+  const [addOpen, setAddOpen] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [newUsername, setNewUsername] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [addBusy, setAddBusy] = useState(false)
+  const [addError, setAddError] = useState<string | null>(null)
+
+  const reloadRangers = useCallback(() => {
+    if (profile) void getRangersForSupervisor(profile.id).then(setRangers)
   }, [profile])
+
+  useEffect(reloadRangers, [reloadRangers])
 
   useEffect(() => {
     let cancelled = false
     async function load() {
       const all = await getShiftsForDate(date)
-      // Foreman sees only rangers of their own work unit (RLS also enforces this server-side).
+      // Poslovođa vidi samo svoje lugare — RLS to i sam garantuje na serveru.
       if (!cancelled) setShifts(all)
     }
     void load()
@@ -89,16 +98,39 @@ export function ForemanDashboard() {
     })
   }, [shifts, search])
 
+  async function handleAddRanger(e: FormEvent) {
+    e.preventDefault()
+    setAddBusy(true)
+    setAddError(null)
+    try {
+      await createRanger({ full_name: newName, username: newUsername, password: newPassword })
+      setNewName('')
+      setNewUsername('')
+      setNewPassword('')
+      setAddOpen(false)
+      reloadRangers()
+    } catch (err) {
+      setAddError(err instanceof Error ? err.message : 'Kreiranje naloga nije uspjelo')
+    } finally {
+      setAddBusy(false)
+    }
+  }
+
   return (
     <div className="mx-auto max-w-5xl space-y-4 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-lg font-bold">Pregled radne jedinice</h1>
-        <Input
-          type="date"
-          value={date}
-          onChange={(e) => setDate(e.target.value)}
-          className="w-auto"
-        />
+        <h1 className="text-lg font-bold">Pregled lugara</h1>
+        <div className="flex gap-2">
+          <Input
+            type="date"
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+            className="w-auto"
+          />
+          <Button size="sm" onClick={() => setAddOpen(true)}>
+            <UserPlus className="h-4 w-4" /> Dodaj lugara
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
@@ -171,6 +203,43 @@ export function ForemanDashboard() {
           ))}
         </TableBody>
       </Table>
+
+      <Dialog open={addOpen} onClose={() => setAddOpen(false)} title="Dodaj lugara">
+        <form onSubmit={handleAddRanger} className="space-y-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="rname">Ime i prezime</Label>
+            <Input id="rname" value={newName} onChange={(e) => setNewName(e.target.value)} required />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="rusername">Korisničko ime</Label>
+            <Input
+              id="rusername"
+              placeholder="npr. pero.peric"
+              value={newUsername}
+              onChange={(e) => setNewUsername(e.target.value)}
+              required
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="rpassword">Početna šifra</Label>
+            <Input
+              id="rpassword"
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              required
+              minLength={6}
+            />
+            <p className="text-xs text-muted-foreground">
+              Lugar se prijavljuje korisničkim imenom i može kasnije promijeniti šifru.
+            </p>
+          </div>
+          {addError && <p className="text-sm text-destructive">{addError}</p>}
+          <Button type="submit" className="w-full" size="lg" disabled={addBusy}>
+            {addBusy ? 'Kreiranje…' : 'Kreiraj nalog'}
+          </Button>
+        </form>
+      </Dialog>
     </div>
   )
 }

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { Building2, Landmark, Plus, Users } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { Building2, CheckCircle2, Landmark, Plus, UserCheck, Users } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -27,9 +27,9 @@ import {
 import type { Forestry, Profile, WorkUnit } from '@/types'
 
 /**
- * Admin console: forestries, work units and users.
- * New users are created through Supabase Auth (invite) — here the admin
- * manages their role, work-unit assignment and active state.
+ * Admin console: forestries, work units, users and pending poslovođa
+ * approvals. Poslovođe se sami registruju (RegisterPage) i čekaju odobrenje
+ * ovdje; lugare kreiraju njihovi poslovođe iz svog dashboarda.
  */
 export function AdminPage() {
   const [forestries, setForestries] = useState<Forestry[]>([])
@@ -53,6 +53,20 @@ export function AdminPage() {
   }, [])
 
   useEffect(reload, [reload])
+
+  const pendingForemen = useMemo(
+    () => profiles.filter((p) => p.role === 'foreman' && !p.active),
+    [profiles],
+  )
+  const activeForemen = useMemo(
+    () => profiles.filter((p) => p.role === 'foreman' && p.active),
+    [profiles],
+  )
+
+  async function approveForeman(id: string) {
+    await updateProfile(id, { active: true })
+    reload()
+  }
 
   async function submitForestry(e: FormEvent) {
     e.preventDefault()
@@ -97,6 +111,7 @@ export function AdminPage() {
         role: editUser.role,
         work_unit_id: editUser.work_unit_id,
         forestry_id: editUser.forestry_id,
+        supervisor_id: editUser.supervisor_id,
         phone: editUser.phone,
         active: editUser.active,
       })
@@ -112,6 +127,32 @@ export function AdminPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-4 p-4">
       <h1 className="text-lg font-bold">Administracija</h1>
+
+      {pendingForemen.length > 0 && (
+        <Card className="border-warning/40">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <UserCheck className="h-4 w-4 text-warning" /> Zahtjevi za odobrenje
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {pendingForemen.map((p) => (
+              <div
+                key={p.id}
+                className="flex items-center justify-between gap-2 rounded-lg bg-muted px-3 py-2"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">{p.full_name}</p>
+                  <p className="text-xs text-muted-foreground">Poslovođa uzgoja — čeka odobrenje</p>
+                </div>
+                <Button size="sm" onClick={() => void approveForeman(p.id)}>
+                  <CheckCircle2 className="h-4 w-4" /> Odobri
+                </Button>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
@@ -174,7 +215,7 @@ export function AdminPage() {
               <TableRow>
                 <TableHead>Ime</TableHead>
                 <TableHead>Uloga</TableHead>
-                <TableHead>Radna jedinica</TableHead>
+                <TableHead>Poslovođa / Radna jedinica</TableHead>
                 <TableHead>Status</TableHead>
               </TableRow>
             </TableHeader>
@@ -182,7 +223,7 @@ export function AdminPage() {
               {profiles.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={4} className="py-6 text-center text-muted-foreground">
-                    Nema korisnika. Novi korisnici se pozivaju putem Supabase Auth.
+                    Nema korisnika. Poslovođe se sami registruju, a lugare dodaju njihovi poslovođe.
                   </TableCell>
                 </TableRow>
               )}
@@ -190,7 +231,11 @@ export function AdminPage() {
                 <TableRow key={p.id} className="cursor-pointer" onClick={() => setEditUser({ ...p })}>
                   <TableCell className="font-medium">{p.full_name}</TableCell>
                   <TableCell>{roleLabel(p.role)}</TableCell>
-                  <TableCell>{p.work_unit?.name ?? '—'}</TableCell>
+                  <TableCell>
+                    {p.role === 'ranger'
+                      ? (profiles.find((f) => f.id === p.supervisor_id)?.full_name ?? '—')
+                      : (p.work_unit?.name ?? '—')}
+                  </TableCell>
                   <TableCell>
                     {p.active ? (
                       <Badge variant="success">Aktivan</Badge>
@@ -281,13 +326,34 @@ export function AdminPage() {
                 }
               >
                 <option value="ranger">Lugar</option>
-                <option value="foreman">Poslovođa</option>
-                <option value="silviculture_foreman">Uzgojni poslovođa</option>
+                <option value="foreman">Poslovođa uzgoja</option>
                 <option value="admin">Administrator</option>
               </Select>
             </div>
+            {editUser.role === 'ranger' && (
+              <div className="space-y-1.5">
+                <Label htmlFor="esupervisor">Poslovođa</Label>
+                <Select
+                  id="esupervisor"
+                  value={editUser.supervisor_id ?? ''}
+                  onChange={(e) =>
+                    setEditUser({ ...editUser, supervisor_id: e.target.value || null })
+                  }
+                >
+                  <option value="">Bez poslovođe</option>
+                  {activeForemen.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.full_name}
+                    </option>
+                  ))}
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Promjenom poslovođe lugar se premješta u njegov tim.
+                </p>
+              </div>
+            )}
             <div className="space-y-1.5">
-              <Label htmlFor="eunit">Radna jedinica</Label>
+              <Label htmlFor="eunit">Radna jedinica (opciono, za izvještaje)</Label>
               <Select
                 id="eunit"
                 value={editUser.work_unit_id ?? ''}

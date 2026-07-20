@@ -22,16 +22,41 @@ npm run dev
 ```
 
 Bez `.env` konfiguracije aplikacija radi u **demo režimu** (offline, IndexedDB)
-— na login ekranu odaberite ulogu (Lugar / Poslovođa / Uzgojni poslovođa / Administrator).
+— na login ekranu odaberite ulogu (Lugar / Poslovođa uzgoja / Administrator).
 
 ## Supabase postavljanje
 
 1. Kreirati Supabase projekt.
-2. U SQL editoru pokrenuti `supabase/migrations/00001_schema.sql`
-   (tabele, RLS politike, trigeri za obavijesti, storage bucket).
-3. Kreirati korisnike kroz Supabase Auth (invite) i dodati red u `profiles`
-   sa odgovarajućom ulogom (`admin`, `foreman`, `silviculture_foreman`, `ranger`).
-4. Upisati `VITE_SUPABASE_URL` i `VITE_SUPABASE_ANON_KEY` u `.env`.
+2. U SQL editoru pokrenuti redom `supabase/migrations/00001_schema.sql` pa
+   `00002_user_management.sql` (tabele, RLS politike, trigeri za obavijesti,
+   storage bucket, trigger za automatsko kreiranje profila, RPC za prijavu
+   korisničkim imenom).
+3. U **Authentication → Settings** isključiti "Confirm email" — aplikacija
+   već ima vlastiti gate za odobrenje poslovođe (`profiles.active`), pa
+   dodatna email potvrda samo komplikuje tok bez sigurnosne koristi.
+4. Deployati Edge funkciju koja poslovođama omogućava kreiranje lugara:
+   ```bash
+   supabase functions deploy create-ranger
+   ```
+5. Upisati `VITE_SUPABASE_URL` i `VITE_SUPABASE_ANON_KEY` u `.env`.
+6. Kreirati **prvog administratora** ručno (jednokratno, samo za bootstrap):
+   Supabase Dashboard → Authentication → Add user (email + šifra), zatim u
+   SQL editoru:
+   ```sql
+   update profiles set role = 'admin', active = true where id = '<user-id>';
+   ```
+
+### Tok kreiranja korisnika (bez daljeg ručnog rada admina)
+
+- **Poslovođa uzgoja** se sam registruje na `/registracija` (ime, email,
+  šifra). Nalog ostaje neaktivan dok ga administrator ne odobri na
+  ekranu Administracija → "Zahtjevi za odobrenje".
+- **Lugar** nema email — poslovođa ga dodaje iz svog dashboarda ("Dodaj
+  lugara": ime, korisničko ime, početna šifra). Lugar se prijavljuje samo
+  korisničkim imenom i kasnije može promijeniti šifru (ikona postavki u
+  zaglavlju).
+- **Premještanje lugara kod drugog poslovođe**: administrator to radi u
+  Administracija → uredi korisnika → padajući meni "Poslovođa".
 
 ## GeoJSON odjela
 
@@ -60,11 +85,14 @@ src/
     layout/     # AppShell (header + bottom nav), FAB
   pages/
     ranger/       # radni dan, službena knjiga, prijave, foto, zadaci
-    foreman/      # dashboard, karta uživo, detalji lugara, izvještaji, pokrivenost, zadaci
-    silviculture/ # prijave + fotografije, karta
-    admin/        # šumarije, radne jedinice, korisnici
+    foreman/      # dashboard (+ dodavanje lugara), karta uživo, detalji lugara,
+                  # izvještaji, pokrivenost, zadaci
+    silviculture/ # prijave + fotografije (rute pod poslovođom uzgoja), karta
+    admin/        # šumarije, radne jedinice, korisnici, odobravanje poslovođa
 supabase/
   migrations/   # kompletna shema sa RLS politikama
+  functions/
+    create-ranger/  # Edge funkcija: poslovođa kreira nalog lugara
 ```
 
 ### Ključni tokovi
@@ -81,9 +109,9 @@ supabase/
   upozorenja, heatmap grid, pokrivenost odjela.
 - **Geofencing** (`geofencingService`): automatski upis ulaska/izlaska iz
   odjela u službenu knjigu tokom smjene.
-- **Obavijesti**: Postgres trigeri pune tabelu `notifications`
-  (nova prijava/fotografija → uzgojni poslovođa; kraj smjene → poslovođa);
-  klijent sluša Realtime kanal + Web Notifications.
+- **Obavijesti**: Postgres trigeri pune tabelu `notifications` (nova
+  prijava/fotografija/kraj smjene → direktno poslovođi lugara preko
+  `profiles.supervisor_id`); klijent sluša Realtime kanal + Web Notifications.
 - **Izvještaji** (`reportService`): PDF (jsPDF) i Excel (SheetJS) export sa
   filterima po datumu, šumariji, radnoj jedinici, lugaru i odjelu.
 

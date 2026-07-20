@@ -76,16 +76,16 @@ export const useAuthStore = create<AuthState>((set) => ({
         role === 'admin'
           ? 'Demo Administrator'
           : role === 'foreman'
-            ? 'Demo Poslovođa'
-            : role === 'silviculture_foreman'
-              ? 'Demo Uzgojni poslovođa'
-              : 'Demo Lugar',
+            ? 'Demo Poslovođa uzgoja'
+            : 'Demo Lugar',
       role,
       work_unit_id: null,
       forestry_id: null,
       phone: null,
       active: true,
       created_at: new Date().toISOString(),
+      username: role === 'ranger' ? 'demo.lugar' : null,
+      supervisor_id: null,
     }
     await kvSet(PROFILE_CACHE_KEY, demo)
     set({ profile: demo })

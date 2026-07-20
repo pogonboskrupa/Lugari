@@ -187,13 +187,25 @@ export async function getProfiles(): Promise<Profile[]> {
   return (data ?? []) as Profile[]
 }
 
-export async function getRangersInWorkUnit(workUnitId: string): Promise<Profile[]> {
+export async function getRangersForSupervisor(supervisorId: string): Promise<Profile[]> {
   if (!supabase) return []
   const { data } = await supabase
     .from('profiles')
     .select('*')
-    .eq('work_unit_id', workUnitId)
+    .eq('supervisor_id', supervisorId)
     .eq('role', 'ranger')
+    .eq('active', true)
+    .order('full_name')
+  return (data ?? []) as Profile[]
+}
+
+/** Active poslovođe — used for the admin's reassignment dropdown. */
+export async function getForemen(): Promise<Profile[]> {
+  if (!supabase) return []
+  const { data } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('role', 'foreman')
     .eq('active', true)
     .order('full_name')
   return (data ?? []) as Profile[]
@@ -203,6 +215,25 @@ export async function updateProfile(id: string, patch: Partial<Profile>): Promis
   if (!supabase) throw new Error('offline')
   const { error } = await supabase.from('profiles').update(patch).eq('id', id)
   if (error) throw error
+}
+
+/** Poslovođa kreira nalog lugara (username + početna šifra) preko Edge funkcije. */
+export async function createRanger(input: {
+  full_name: string
+  username: string
+  password: string
+}): Promise<{ id: string; username: string }> {
+  if (!supabase) throw new Error('offline')
+  const { data, error } = await supabase.functions.invoke<{
+    id?: string
+    username?: string
+    error?: string
+  }>('create-ranger', { body: input })
+  if (error) throw new Error(error.message)
+  if (!data || data.error || !data.id || !data.username) {
+    throw new Error(data?.error ?? 'Kreiranje naloga nije uspjelo')
+  }
+  return { id: data.id, username: data.username }
 }
 
 // ── Tasks ────────────────────────────────────────────────────────────────────

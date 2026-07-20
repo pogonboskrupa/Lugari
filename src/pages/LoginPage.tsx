@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { TreePine } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -7,12 +7,13 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { useAuthStore } from '@/store/authStore'
 import { supabase } from '@/lib/supabase'
+import { resolveLoginEmail } from '@/services/accountService'
 import type { UserRole } from '@/types'
 
 export function LoginPage() {
   const { signIn, signInDemo } = useAuthStore()
   const navigate = useNavigate()
-  const [email, setEmail] = useState('')
+  const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -22,6 +23,8 @@ export function LoginPage() {
     setBusy(true)
     setError(null)
     try {
+      const email = await resolveLoginEmail(identifier)
+      if (!email) throw new Error('Pogrešni podaci za prijavu')
       await signIn(email, password)
       navigate('/')
     } catch (err) {
@@ -50,18 +53,17 @@ export function LoginPage() {
         <Card>
           <CardHeader>
             <CardTitle>Prijava</CardTitle>
-            <CardDescription>Prijavite se svojim službenim nalogom</CardDescription>
+            <CardDescription>Email (poslovođa/admin) ili korisničko ime (lugar)</CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-3">
               <div className="space-y-1.5">
-                <Label htmlFor="email">Email</Label>
+                <Label htmlFor="identifier">Email ili korisničko ime</Label>
                 <Input
-                  id="email"
-                  type="email"
-                  autoComplete="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  id="identifier"
+                  autoComplete="username"
+                  value={identifier}
+                  onChange={(e) => setIdentifier(e.target.value)}
                   required
                 />
               </div>
@@ -86,6 +88,14 @@ export function LoginPage() {
                 </p>
               )}
             </form>
+            {supabase && (
+              <p className="mt-3 text-center text-sm text-muted-foreground">
+                Poslovođa uzgoja bez naloga?{' '}
+                <Link to="/registracija" className="font-medium text-primary underline">
+                  Registrujte se
+                </Link>
+              </p>
+            )}
           </CardContent>
         </Card>
 
@@ -93,15 +103,12 @@ export function LoginPage() {
           <CardHeader>
             <CardTitle className="text-sm">Demo pristup</CardTitle>
           </CardHeader>
-          <CardContent className="grid grid-cols-2 gap-2">
+          <CardContent className="grid grid-cols-3 gap-2">
             <Button variant="outline" onClick={() => void demo('ranger')}>
               Lugar
             </Button>
             <Button variant="outline" onClick={() => void demo('foreman')}>
-              Poslovođa
-            </Button>
-            <Button variant="outline" onClick={() => void demo('silviculture_foreman')}>
-              Uzgojni posl.
+              Poslovođa uzgoja
             </Button>
             <Button variant="outline" onClick={() => void demo('admin')}>
               Administrator

@@ -61,7 +61,7 @@ export function RangerHome() {
       const finished = useTrackingStore.getState().lastShift
       if (finished) {
         setSummary(finished)
-        const foremanId = profile.work_unit?.foreman_id
+        const foremanId = profile.supervisor_id
         if (foremanId) {
           await notifyUser(
             foremanId,

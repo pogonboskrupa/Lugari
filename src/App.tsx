@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { AppShell } from '@/components/layout/AppShell'
 import { LoginPage } from '@/pages/LoginPage'
+import { RegisterPage } from '@/pages/RegisterPage'
 import { RangerHome } from '@/pages/ranger/RangerHome'
 import { LogbookPage } from '@/pages/ranger/LogbookPage'
 import { IncidentsPage } from '@/pages/ranger/IncidentsPage'
@@ -50,6 +51,10 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={profile ? <Navigate to="/" replace /> : <LoginPage />} />
+        <Route
+          path="/registracija"
+          element={profile ? <Navigate to="/" replace /> : <RegisterPage />}
+        />
         {!profile && <Route path="*" element={<Navigate to="/login" replace />} />}
         {profile && (
           <Route element={<AppShell />}>
@@ -67,15 +72,11 @@ export default function App() {
                 <Route path="/" element={<ForemanDashboard />} />
                 <Route path="/karta" element={<LiveMapPage />} />
                 <Route path="/lugar/:rangerId" element={<RangerDetailPage />} />
+                <Route path="/prijave" element={<SilvicultureDashboard />} />
+                <Route path="/foto-karta" element={<PhotoMapPage />} />
                 <Route path="/izvjestaji" element={<ReportsPage />} />
                 <Route path="/pokrivenost" element={<CoveragePage />} />
                 <Route path="/zadaci" element={<ForemanTasksPage />} />
-              </>
-            )}
-            {profile.role === 'silviculture_foreman' && (
-              <>
-                <Route path="/" element={<SilvicultureDashboard />} />
-                <Route path="/foto-karta" element={<PhotoMapPage />} />
               </>
             )}
             {profile.role === 'admin' && (

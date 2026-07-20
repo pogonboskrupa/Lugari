@@ -11,7 +11,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useAuthStore } from '@/store/authStore'
 import {
   createTask,
-  getRangersInWorkUnit,
+  getRangersForSupervisor,
   getTasksForForeman,
 } from '@/services/dataService'
 import { formatDate } from '@/lib/utils'
@@ -34,7 +34,7 @@ export function ForemanTasksPage() {
   const reload = useCallback(() => {
     if (!profile) return
     void getTasksForForeman(profile.id).then(setTasks)
-    if (profile.work_unit_id) void getRangersInWorkUnit(profile.work_unit_id).then(setRangers)
+    void getRangersForSupervisor(profile.id).then(setRangers)
   }, [profile])
 
   useEffect(reload, [reload])

@@ -10,11 +10,13 @@ import {
   Map as MapIcon,
   Moon,
   RefreshCw,
+  Settings,
   Siren,
   Sun,
   TreePine,
   Users,
 } from 'lucide-react'
+import { AccountSettingsDialog } from './AccountSettingsDialog'
 import { useAuthStore } from '@/store/authStore'
 import { useOnline } from '@/hooks/useOnline'
 import { useTheme } from '@/hooks/useTheme'
@@ -43,14 +45,9 @@ function navForRole(role: string): NavItem[] {
       return [
         { to: '/', label: 'Pregled', icon: LayoutDashboard },
         { to: '/karta', label: 'Karta', icon: MapIcon },
+        { to: '/prijave', label: 'Prijave', icon: Siren },
         { to: '/izvjestaji', label: 'Izvještaji', icon: BookOpen },
-        { to: '/pokrivenost', label: 'Pokrivenost', icon: TreePine },
         { to: '/zadaci', label: 'Zadaci', icon: ListChecks },
-      ]
-    case 'silviculture_foreman':
-      return [
-        { to: '/', label: 'Prijave', icon: Siren },
-        { to: '/foto-karta', label: 'Karta', icon: MapIcon },
       ]
     case 'admin':
       return [
@@ -70,6 +67,7 @@ export function AppShell() {
   const navigate = useNavigate()
   const [pending, setPending] = useState(0)
   const [toast, setToast] = useState<{ title: string; body: string } | null>(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   useEffect(() => {
     void pendingCount().then(setPending)
@@ -109,6 +107,13 @@ export function AppShell() {
           </Badge>
         )}
         <button
+          onClick={() => setSettingsOpen(true)}
+          className="rounded-full p-2 text-muted-foreground hover:bg-accent"
+          aria-label="Postavke naloga"
+        >
+          <Settings className="h-5 w-5" />
+        </button>
+        <button
           onClick={toggle}
           className="rounded-full p-2 text-muted-foreground hover:bg-accent"
           aria-label="Promijeni temu"
@@ -135,6 +140,8 @@ export function AppShell() {
           </div>
         )}
       </main>
+
+      <AccountSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
 
       <nav className="border-t border-border bg-card pb-[env(safe-area-inset-bottom)]">
         <div className="mx-auto flex max-w-lg items-stretch justify-around">
@@ -165,9 +172,7 @@ export function roleLabel(role: string): string {
     case 'admin':
       return 'Administrator'
     case 'foreman':
-      return 'Poslovođa'
-    case 'silviculture_foreman':
-      return 'Uzgojni poslovođa'
+      return 'Poslovođa uzgoja'
     case 'ranger':
       return 'Lugar'
     default:
