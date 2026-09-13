@@ -1,11 +1,13 @@
+import { doc, setDoc, updateDoc } from 'firebase/firestore'
+import { getDownloadURL, ref, uploadBytes } from 'firebase/storage'
 import { getDB } from '@/lib/db'
-import { supabase } from '@/lib/supabase'
+import { db, storage } from '@/lib/firebase'
 import { uuid } from '@/lib/utils'
 import type { Incident, LogbookEntry, SyncEntity, SyncQueueItem, WorkShift } from '@/types'
 
 /**
  * Offline-first sync queue. Every write goes through IndexedDB first;
- * when the network is available the queue is drained to Supabase.
+ * when the network is available the queue is drained to Firestore.
  */
 
 const MAX_ATTEMPTS = 10
@@ -19,13 +21,13 @@ export function onSyncStateChange(listener: SyncListener): () => void {
 }
 
 async function notifyListeners() {
-  const db = await getDB()
-  const pending = await db.count('syncQueue')
+  const localDb = await getDB()
+  const pending = await localDb.count('syncQueue')
   for (const l of listeners) l(pending)
 }
 
 export async function enqueueSync(entity: SyncEntity, payload: unknown): Promise<void> {
-  const db = await getDB()
+  const localDb = await getDB()
   const item: SyncQueueItem = {
     id: uuid(),
     entity,
@@ -33,34 +35,34 @@ export async function enqueueSync(entity: SyncEntity, payload: unknown): Promise
     created_at: Date.now(),
     attempts: 0,
   }
-  await db.put('syncQueue', item)
+  await localDb.put('syncQueue', item)
   await notifyListeners()
   if (navigator.onLine) void drainQueue()
 }
 
 export async function pendingCount(): Promise<number> {
-  const db = await getDB()
-  return db.count('syncQueue')
+  const localDb = await getDB()
+  return localDb.count('syncQueue')
 }
 
 let draining = false
 
 export async function drainQueue(): Promise<void> {
-  if (draining || !supabase) return
+  if (draining || !db) return
   draining = true
   try {
-    const db = await getDB()
-    const items = await db.getAllFromIndex('syncQueue', 'by-created')
+    const localDb = await getDB()
+    const items = await localDb.getAllFromIndex('syncQueue', 'by-created')
     for (const item of items) {
       try {
         await pushItem(item)
-        await db.delete('syncQueue', item.id)
+        await localDb.delete('syncQueue', item.id)
       } catch {
         item.attempts += 1
         if (item.attempts >= MAX_ATTEMPTS) {
           // Keep the item but stop hot-looping on it; it will retry on next drain.
         }
-        await db.put('syncQueue', item)
+        await localDb.put('syncQueue', item)
         break // Stop on first failure (likely offline again).
       }
     }
@@ -71,12 +73,11 @@ export async function drainQueue(): Promise<void> {
 }
 
 async function pushItem(item: SyncQueueItem): Promise<void> {
-  if (!supabase) throw new Error('offline')
+  if (!db) throw new Error('offline')
   switch (item.entity) {
     case 'shift': {
       const shift = item.payload as WorkShift
-      const { error } = await supabase.from('work_shifts').upsert({
-        id: shift.id,
+      await setDoc(doc(db, 'work_shifts', shift.id), {
         ranger_id: shift.ranger_id,
         work_date: shift.work_date,
         started_at: shift.started_at,
@@ -92,20 +93,18 @@ async function pushItem(item: SyncQueueItem): Promise<void> {
         time_at_landing_ms: shift.time_at_landing_ms,
         time_outside_ms: shift.time_outside_ms,
       })
-      if (error) throw error
       break
     }
     case 'logbook': {
       const entry = item.payload as LogbookEntry
-      const { error } = await supabase.from('logbook_entries').upsert(entry)
-      if (error) throw error
+      const { id, ...row } = entry
+      await setDoc(doc(db, 'logbook_entries', id), row)
       break
     }
     case 'incident': {
       const incident = item.payload as Incident
-      const { ranger: _ranger, ...row } = incident
-      const { error } = await supabase.from('incidents').upsert(row)
-      if (error) throw error
+      const { id, ranger: _ranger, ...row } = incident
+      await setDoc(doc(db, 'incidents', id), row)
       break
     }
     case 'photo': {
@@ -120,36 +119,32 @@ async function pushItem(item: SyncQueueItem): Promise<void> {
         lng: number | null
         completedAt: string
       }
-      const { error } = await supabase
-        .from('ranger_tasks')
-        .update({ status: 'done', completed_at: completedAt, completed_lat: lat, completed_lng: lng })
-        .eq('id', taskId)
-      if (error) throw error
+      await updateDoc(doc(db, 'ranger_tasks', taskId), {
+        status: 'done',
+        completed_at: completedAt,
+        completed_lat: lat,
+        completed_lng: lng,
+      })
       break
     }
   }
 }
 
 async function uploadLocalPhoto(photoId: string): Promise<void> {
-  if (!supabase) throw new Error('offline')
-  const db = await getDB()
-  const local = await db.get('photos', photoId)
+  if (!db || !storage) throw new Error('offline')
+  const localDb = await getDB()
+  const local = await localDb.get('photos', photoId)
   if (!local) return // Already uploaded and cleaned up.
 
-  const path = `${local.meta.ranger_id}/${photoId}.jpg`
-  const { error: uploadError } = await supabase.storage
-    .from('field-photos')
-    .upload(path, local.blob, { contentType: 'image/jpeg', upsert: true })
-  if (uploadError) throw uploadError
+  const path = `field-photos/${local.meta.ranger_id}/${photoId}.jpg`
+  const storageRef = ref(storage, path)
+  await uploadBytes(storageRef, local.blob, { contentType: 'image/jpeg' })
+  const url = await getDownloadURL(storageRef)
 
-  const { data } = supabase.storage.from('field-photos').getPublicUrl(path)
-  const { error } = await supabase.from('field_photos').upsert({
-    ...local.meta,
-    url: data.publicUrl,
-  })
-  if (error) throw error
+  const { id, ranger: _ranger, ...row } = local.meta
+  await setDoc(doc(db, 'field_photos', id), { ...row, url })
 
-  await db.delete('photos', photoId)
+  await localDb.delete('photos', photoId)
 }
 
 /** Wire automatic sync on connectivity changes. Call once at app start. */

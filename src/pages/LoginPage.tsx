@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { useAuthStore } from '@/store/authStore'
-import { supabase } from '@/lib/supabase'
+import { auth } from '@/lib/firebase'
 import { resolveLoginEmail } from '@/services/accountService'
 import type { UserRole } from '@/types'
 
@@ -79,16 +79,16 @@ export function LoginPage() {
                 />
               </div>
               {error && <p className="text-sm text-destructive">{error}</p>}
-              <Button type="submit" className="w-full" size="lg" disabled={busy || !supabase}>
+              <Button type="submit" className="w-full" size="lg" disabled={busy || !auth}>
                 {busy ? 'Prijava…' : 'Prijavi se'}
               </Button>
-              {!supabase && (
+              {!auth && (
                 <p className="text-center text-xs text-muted-foreground">
-                  Supabase nije konfigurisan — koristite demo pristup ispod.
+                  Firebase nije konfigurisan — koristite demo pristup ispod.
                 </p>
               )}
             </form>
-            {supabase && (
+            {auth && (
               <p className="mt-3 text-center text-sm text-muted-foreground">
                 Poslovođa uzgoja bez naloga?{' '}
                 <Link to="/registracija" className="font-medium text-primary underline">

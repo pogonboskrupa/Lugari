@@ -5,7 +5,9 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
-import { requireSupabase } from '@/lib/supabase'
+import { createUserWithEmailAndPassword } from 'firebase/auth'
+import { doc, setDoc } from 'firebase/firestore'
+import { requireAuth, requireDb } from '@/lib/firebase'
 
 /** Self-registration for poslovođa uzgoja — account stays inactive until an admin approves it. */
 export function RegisterPage() {
@@ -30,13 +32,20 @@ export function RegisterPage() {
     }
     setBusy(true)
     try {
-      const supabase = requireSupabase()
-      const { error: signUpError } = await supabase.auth.signUp({
-        email,
-        password,
-        options: { data: { full_name: fullName, role: 'foreman' } },
+      const auth = requireAuth()
+      const db = requireDb()
+      const credential = await createUserWithEmailAndPassword(auth, email, password)
+      await setDoc(doc(db, 'profiles', credential.user.uid), {
+        full_name: fullName,
+        role: 'foreman',
+        work_unit_id: null,
+        forestry_id: null,
+        phone: null,
+        active: false,
+        created_at: new Date().toISOString(),
+        username: null,
+        supervisor_id: null,
       })
-      if (signUpError) throw signUpError
       setDone(true)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Registracija nije uspjela')

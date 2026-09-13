@@ -9,7 +9,7 @@ administracija — optimizovana za Android telefone i rad bez interneta.
 - **React 19 + TypeScript + Vite** — brz, moderan frontend
 - **Leaflet + GeoJSON** — karta odjela, GPS tragovi, heatmap, replay
 - **IndexedDB (idb)** — offline-first pohrana i sync queue
-- **Supabase** — Auth, Postgres sa RLS, Storage, Realtime obavijesti
+- **Firebase** — Auth, Firestore, Storage, Cloud Functions (2nd gen)
 - **TailwindCSS 4 + Shadcn-style UI** — tamna/svijetla tema, velike kartice
 - **vite-plugin-pwa** — instalabilna aplikacija, keširanje OSM pločica i GeoJSON-a
 
@@ -17,34 +17,68 @@ administracija — optimizovana za Android telefone i rad bez interneta.
 
 ```bash
 npm install
-cp .env.example .env   # upisati Supabase URL i anon ključ
+cp .env.example .env   # upisati Firebase konfiguraciju web aplikacije
 npm run dev
 ```
 
 Bez `.env` konfiguracije aplikacija radi u **demo režimu** (offline, IndexedDB)
 — na login ekranu odaberite ulogu (Lugar / Poslovođa uzgoja / Administrator).
 
-## Supabase postavljanje
+## Firebase postavljanje
 
-1. Kreirati Supabase projekt.
-2. U SQL editoru pokrenuti redom `supabase/migrations/00001_schema.sql` pa
-   `00002_user_management.sql` (tabele, RLS politike, trigeri za obavijesti,
-   storage bucket, trigger za automatsko kreiranje profila, RPC za prijavu
-   korisničkim imenom).
-3. U **Authentication → Settings** isključiti "Confirm email" — aplikacija
-   već ima vlastiti gate za odobrenje poslovođe (`profiles.active`), pa
-   dodatna email potvrda samo komplikuje tok bez sigurnosne koristi.
-4. Deployati Edge funkciju koja poslovođama omogućava kreiranje lugara:
+1. Kreirati Firebase projekt na [console.firebase.google.com](https://console.firebase.google.com)
+   i nadograditi na **Blaze** plan (potreban za Cloud Functions — obavijesti
+   i kreiranje lugara rade preko funkcija).
+2. **Authentication → Sign-in method** → uključiti Email/Password.
+3. **Firestore Database** → kreirati bazu (production mode).
+4. **Storage** → kreirati bucket (default).
+5. Instalirati Firebase CLI i prijaviti se:
    ```bash
-   supabase functions deploy create-ranger
+   npm install -g firebase-tools
+   firebase login
    ```
-5. Upisati `VITE_SUPABASE_URL` i `VITE_SUPABASE_ANON_KEY` u `.env`.
-6. Kreirati **prvog administratora** ručno (jednokratno, samo za bootstrap):
-   Supabase Dashboard → Authentication → Add user (email + šifra), zatim u
-   SQL editoru:
-   ```sql
-   update profiles set role = 'admin', active = true where id = '<user-id>';
+6. U `.firebaserc` upisati pravi `projectId` umjesto `your-firebase-project-id`.
+7. Deployati Firestore/Storage pravila, indekse i Cloud Functions:
+   ```bash
+   firebase deploy --only firestore:rules,firestore:indexes,storage,functions
    ```
+   (`functions/` je zaseban npm paket — `firebase deploy` sam pokreće njegov
+   `npm install`/build preko `predeploy` hook-a iz `firebase.json`.)
+8. **Project settings → General → Your apps** → dodati Web app i prekopirati
+   konfiguraciju u `.env` (`VITE_FIREBASE_*` varijable, vidi `.env.example`).
+9. Kreirati **prvog administratora** ručno (jednokratno, samo za bootstrap):
+   Firebase Console → Authentication → Add user (email + šifra), zatim u
+   Firestore konzoli kreirati dokument `profiles/<uid>` (uid iz Authentication
+   taba) sa poljima:
+   ```json
+   {
+     "full_name": "Ime Prezime",
+     "role": "admin",
+     "active": true,
+     "work_unit_id": null,
+     "forestry_id": null,
+     "phone": null,
+     "username": null,
+     "supervisor_id": null,
+     "created_at": "2026-01-01T00:00:00.000Z"
+   }
+   ```
+
+### Struktura Firebase backenda
+
+```
+firestore.rules            # sigurnosna pravila (zamjena za Postgres RLS)
+firestore.indexes.json     # kompozitni indeksi za upite u dataService.ts
+storage.rules               # pristup Storage bucketu za terenske fotografije
+functions/
+  src/index.ts              # createRanger, resolveLoginEmail (callable)
+                             # + Firestore trigeri za automatske obavijesti
+                             # (zamjena za Postgres trigere)
+```
+
+Kolekcije u Firestore-u (ravna struktura, bez šema): `forestries`, `work_units`,
+`profiles` (id = Firebase Auth uid), `work_shifts`, `logbook_entries`,
+`incidents`, `field_photos`, `ranger_tasks`, `notifications`.
 
 ### Tok kreiranja korisnika (bez daljeg ručnog rada admina)
 
@@ -74,7 +108,7 @@ podacima ŠPD-a (isti atributi).
 
 ```
 src/
-  lib/          # supabase klijent, IndexedDB (idb), pomoćne funkcije
+  lib/          # firebase klijent, IndexedDB (idb), pomoćne funkcije
   types/        # svi TypeScript domenski tipovi
   services/     # servisni sloj: tracking, geo, sync, analytics, reports…
   store/        # Zustand: auth i GPS tracking stanje
@@ -89,10 +123,10 @@ src/
                   # izvještaji, pokrivenost, zadaci
     silviculture/ # prijave + fotografije (rute pod poslovođom uzgoja), karta
     admin/        # šumarije, radne jedinice, korisnici, odobravanje poslovođa
-supabase/
-  migrations/   # kompletna shema sa RLS politikama
-  functions/
-    create-ranger/  # Edge funkcija: poslovođa kreira nalog lugara
+firestore.rules, firestore.indexes.json, storage.rules
+functions/
+  src/index.ts    # createRanger, resolveLoginEmail (callable) + Firestore
+                  # trigeri za automatske obavijesti
 ```
 
 ### Ključni tokovi
@@ -101,7 +135,7 @@ supabase/
   (vrijeme, lat, lng, brzina, tačnost), upis odmah u IndexedDB (otporno na
   gašenje aplikacije), screen wake-lock, nastavak trage nakon restarta.
 - **Offline sync** (`syncService`): svi upisi idu u IndexedDB + sync queue;
-  pri povratku mreže queue se automatski prazni prema Supabase (tragovi,
+  pri povratku mreže queue se automatski prazni prema Firestore (tragovi,
   knjiga, prijave, fotografije u Storage, potvrde zadataka).
 - **Geo-analiza** (`geoService`/`analyticsService`): point-in-polygon (Turf)
   za status *U odjelu / Na lageru / Van odjela*, kilometraža (Haversine +
@@ -109,9 +143,10 @@ supabase/
   upozorenja, heatmap grid, pokrivenost odjela.
 - **Geofencing** (`geofencingService`): automatski upis ulaska/izlaska iz
   odjela u službenu knjigu tokom smjene.
-- **Obavijesti**: Postgres trigeri pune tabelu `notifications` (nova
-  prijava/fotografija/kraj smjene → direktno poslovođi lugara preko
-  `profiles.supervisor_id`); klijent sluša Realtime kanal + Web Notifications.
+- **Obavijesti**: Cloud Functions trigeri (`functions/src/index.ts`) pune
+  kolekciju `notifications` (nova prijava/fotografija/kraj smjene → direktno
+  poslovođi lugara preko `profiles.supervisor_id`); klijent sluša Firestore
+  `onSnapshot` listener + Web Notifications.
 - **Izvještaji** (`reportService`): PDF (jsPDF) i Excel (SheetJS) export sa
   filterima po datumu, šumariji, radnoj jedinici, lugaru i odjelu.
 

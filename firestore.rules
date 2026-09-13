@@ -1,0 +1,105 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function myProfile() {
+      return get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data;
+    }
+
+    function myRole() {
+      return myProfile().role;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && myRole() == 'admin';
+    }
+
+    function isForeman() {
+      return isSignedIn() && myRole() == 'foreman';
+    }
+
+    /** True if `rangerId` reports to the signed-in foreman. */
+    function supervises(rangerId) {
+      return isForeman()
+        && get(/databases/$(database)/documents/profiles/$(rangerId)).data.supervisor_id == request.auth.uid;
+    }
+
+    // ── Organizacija: svi prijavljeni čitaju, samo admin piše ──────────────────
+    match /forestries/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /work_units/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // ── Profili: korisnik vidi sebe; poslovođa svoje lugare; admin sve ─────────
+    match /profiles/{id} {
+      allow read: if isSignedIn() && (
+        request.auth.uid == id || isAdmin() || resource.data.supervisor_id == request.auth.uid
+      );
+      // Samoregistracija poslovođe: nalog kreira samo svoj profil, neaktivan.
+      allow create: if isSignedIn() && request.auth.uid == id
+        && request.resource.data.role == 'foreman'
+        && request.resource.data.active == false;
+      allow update, delete: if isAdmin();
+    }
+
+    // ── Radni dani (GPS tragovi): lugar svoje; poslovođa svoju grupu; admin sve ─
+    match /work_shifts/{id} {
+      allow read: if isSignedIn() && (
+        resource.data.ranger_id == request.auth.uid || isAdmin() || supervises(resource.data.ranger_id)
+      );
+      allow create, update: if isSignedIn() && request.resource.data.ranger_id == request.auth.uid;
+    }
+
+    // ── Službena knjiga ─────────────────────────────────────────────────────────
+    match /logbook_entries/{id} {
+      allow read: if isSignedIn() && (
+        resource.data.ranger_id == request.auth.uid || isAdmin() || supervises(resource.data.ranger_id)
+      );
+      allow create, update: if isSignedIn() && request.resource.data.ranger_id == request.auth.uid;
+    }
+
+    // ── Prijave ──────────────────────────────────────────────────────────────────
+    match /incidents/{id} {
+      allow read: if isSignedIn() && (
+        resource.data.ranger_id == request.auth.uid || isAdmin() || supervises(resource.data.ranger_id)
+      );
+      allow create, update: if isSignedIn() && request.resource.data.ranger_id == request.auth.uid;
+    }
+
+    // ── Fotografije ──────────────────────────────────────────────────────────────
+    match /field_photos/{id} {
+      allow read: if isSignedIn() && (
+        resource.data.ranger_id == request.auth.uid || isAdmin() || supervises(resource.data.ranger_id)
+      );
+      allow create, update: if isSignedIn() && request.resource.data.ranger_id == request.auth.uid;
+    }
+
+    // ── Zadaci: poslovođa kreira i vidi svoje; lugar vidi i potvrđuje svoje ─────
+    match /ranger_tasks/{id} {
+      allow read: if isSignedIn() && (
+        resource.data.ranger_id == request.auth.uid || resource.data.foreman_id == request.auth.uid || isAdmin()
+      );
+      allow create: if isForeman() && request.resource.data.foreman_id == request.auth.uid;
+      allow update: if isSignedIn() && (
+        resource.data.foreman_id == request.auth.uid || resource.data.ranger_id == request.auth.uid
+      );
+    }
+
+    // ── Obavijesti: primalac čita/označava; svako prijavljeno može ubaciti ──────
+    match /notifications/{id} {
+      allow read: if isSignedIn() && resource.data.recipient_id == request.auth.uid;
+      allow create: if isSignedIn();
+      allow update: if isSignedIn() && resource.data.recipient_id == request.auth.uid;
+    }
+  }
+}

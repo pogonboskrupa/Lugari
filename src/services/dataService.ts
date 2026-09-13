@@ -1,5 +1,18 @@
+import {
+  collection,
+  doc,
+  documentId,
+  getDocs,
+  limit as fbLimit,
+  orderBy,
+  query,
+  setDoc,
+  updateDoc,
+  where,
+} from 'firebase/firestore'
+import { httpsCallable } from 'firebase/functions'
 import { getDB } from '@/lib/db'
-import { supabase } from '@/lib/supabase'
+import { db, functions } from '@/lib/firebase'
 import { uuid, todayISO } from '@/lib/utils'
 import type {
   AppNotification,
@@ -15,54 +28,78 @@ import type {
 import { enqueueSync } from './syncService'
 
 /**
- * Data access layer. Reads prefer Supabase and fall back to IndexedDB;
+ * Data access layer. Reads prefer Firestore and fall back to IndexedDB;
  * writes always land in IndexedDB first and are synced via the queue.
  */
+
+// ── Joins (Firestore has none — batch-fetch and attach) ─────────────────────
+
+async function fetchProfilesByIds(ids: string[]): Promise<Map<string, Profile>> {
+  const map = new Map<string, Profile>()
+  if (!db || ids.length === 0) return map
+  const unique = [...new Set(ids)]
+  for (let i = 0; i < unique.length; i += 30) {
+    const chunk = unique.slice(i, i + 30)
+    const snap = await getDocs(query(collection(db, 'profiles'), where(documentId(), 'in', chunk)))
+    for (const d of snap.docs) map.set(d.id, { id: d.id, ...d.data() } as Profile)
+  }
+  return map
+}
+
+async function attachRangers<T extends { ranger_id: string }>(rows: T[]): Promise<(T & { ranger?: Profile })[]> {
+  const profiles = await fetchProfilesByIds(rows.map((r) => r.ranger_id))
+  return rows.map((r) => ({ ...r, ranger: profiles.get(r.ranger_id) }))
+}
 
 // ── Shifts ───────────────────────────────────────────────────────────────────
 
 export async function getShiftsForDate(date: string): Promise<WorkShift[]> {
-  if (supabase) {
-    const { data, error } = await supabase
-      .from('work_shifts')
-      .select('*, ranger:profiles(*)')
-      .eq('work_date', date)
-    if (!error && data) return data as WorkShift[]
+  if (db) {
+    const snap = await getDocs(
+      query(collection(db, 'work_shifts'), where('work_date', '==', date)),
+    )
+    const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as WorkShift)
+    return attachRangers(rows)
   }
-  const db = await getDB()
-  return db.getAllFromIndex('shifts', 'by-date', date)
+  const localDb = await getDB()
+  return localDb.getAllFromIndex('shifts', 'by-date', date)
 }
 
 export async function getShiftsInRange(from: string, to: string): Promise<WorkShift[]> {
-  if (supabase) {
-    const { data, error } = await supabase
-      .from('work_shifts')
-      .select('*, ranger:profiles(*)')
-      .gte('work_date', from)
-      .lte('work_date', to)
-      .order('work_date', { ascending: false })
-    if (!error && data) return data as WorkShift[]
+  if (db) {
+    const snap = await getDocs(
+      query(
+        collection(db, 'work_shifts'),
+        where('work_date', '>=', from),
+        where('work_date', '<=', to),
+        orderBy('work_date', 'desc'),
+      ),
+    )
+    const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as WorkShift)
+    return attachRangers(rows)
   }
-  const db = await getDB()
-  const all = await db.getAll('shifts')
+  const localDb = await getDB()
+  const all = await localDb.getAll('shifts')
   return all
     .filter((s) => s.work_date >= from && s.work_date <= to)
     .sort((a, b) => b.work_date.localeCompare(a.work_date))
 }
 
-export async function getShiftsForRanger(rangerId: string, limit = 30): Promise<WorkShift[]> {
-  if (supabase) {
-    const { data, error } = await supabase
-      .from('work_shifts')
-      .select('*')
-      .eq('ranger_id', rangerId)
-      .order('work_date', { ascending: false })
-      .limit(limit)
-    if (!error && data) return data as WorkShift[]
+export async function getShiftsForRanger(rangerId: string, limitCount = 30): Promise<WorkShift[]> {
+  if (db) {
+    const snap = await getDocs(
+      query(
+        collection(db, 'work_shifts'),
+        where('ranger_id', '==', rangerId),
+        orderBy('work_date', 'desc'),
+        fbLimit(limitCount),
+      ),
+    )
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as WorkShift)
   }
-  const db = await getDB()
-  const all = await db.getAllFromIndex('shifts', 'by-ranger', rangerId)
-  return all.sort((a, b) => b.work_date.localeCompare(a.work_date)).slice(0, limit)
+  const localDb = await getDB()
+  const all = await localDb.getAllFromIndex('shifts', 'by-ranger', rangerId)
+  return all.sort((a, b) => b.work_date.localeCompare(a.work_date)).slice(0, limitCount)
 }
 
 // ── Logbook ──────────────────────────────────────────────────────────────────
@@ -71,24 +108,26 @@ export async function addLogbookEntry(
   entry: Omit<LogbookEntry, 'id' | 'created_at'>,
 ): Promise<LogbookEntry> {
   const full: LogbookEntry = { ...entry, id: uuid(), created_at: new Date().toISOString() }
-  const db = await getDB()
-  await db.put('logbook', full)
+  const localDb = await getDB()
+  await localDb.put('logbook', full)
   await enqueueSync('logbook', full)
   return full
 }
 
 export async function getLogbookEntries(rangerId: string): Promise<LogbookEntry[]> {
-  if (supabase) {
-    const { data, error } = await supabase
-      .from('logbook_entries')
-      .select('*')
-      .eq('ranger_id', rangerId)
-      .order('entry_date', { ascending: false })
-      .order('entry_time', { ascending: false })
-    if (!error && data) return data as LogbookEntry[]
+  if (db) {
+    const snap = await getDocs(
+      query(
+        collection(db, 'logbook_entries'),
+        where('ranger_id', '==', rangerId),
+        orderBy('entry_date', 'desc'),
+        orderBy('entry_time', 'desc'),
+      ),
+    )
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as LogbookEntry)
   }
-  const db = await getDB()
-  const all = await db.getAll('logbook')
+  const localDb = await getDB()
+  const all = await localDb.getAll('logbook')
   return all
     .filter((e) => e.ranger_id === rangerId)
     .sort((a, b) => `${b.entry_date}${b.entry_time}`.localeCompare(`${a.entry_date}${a.entry_time}`))
@@ -100,22 +139,20 @@ export async function createIncident(
   incident: Omit<Incident, 'id' | 'created_at'>,
 ): Promise<Incident> {
   const full: Incident = { ...incident, id: uuid(), created_at: new Date().toISOString() }
-  const db = await getDB()
-  await db.put('incidents', full)
+  const localDb = await getDB()
+  await localDb.put('incidents', full)
   await enqueueSync('incident', full)
   return full
 }
 
 export async function getIncidents(): Promise<Incident[]> {
-  if (supabase) {
-    const { data, error } = await supabase
-      .from('incidents')
-      .select('*, ranger:profiles(*)')
-      .order('created_at', { ascending: false })
-    if (!error && data) return data as Incident[]
+  if (db) {
+    const snap = await getDocs(query(collection(db, 'incidents'), orderBy('created_at', 'desc')))
+    const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Incident)
+    return attachRangers(rows)
   }
-  const db = await getDB()
-  const all = await db.getAll('incidents')
+  const localDb = await getDB()
+  const all = await localDb.getAll('incidents')
   return all.sort((a, b) => b.created_at.localeCompare(a.created_at))
 }
 
@@ -126,23 +163,21 @@ export async function saveFieldPhoto(
   meta: Omit<FieldPhoto, 'id' | 'url'>,
 ): Promise<string> {
   const id = uuid()
-  const db = await getDB()
-  await db.put('photos', { id, blob, meta: { ...meta, id } })
+  const localDb = await getDB()
+  await localDb.put('photos', { id, blob, meta: { ...meta, id } })
   await enqueueSync('photo', { photoId: id })
   return id
 }
 
 export async function getFieldPhotos(): Promise<FieldPhoto[]> {
-  if (supabase) {
-    const { data, error } = await supabase
-      .from('field_photos')
-      .select('*, ranger:profiles(*)')
-      .order('taken_at', { ascending: false })
-    if (!error && data) return data as FieldPhoto[]
+  if (db) {
+    const snap = await getDocs(query(collection(db, 'field_photos'), orderBy('taken_at', 'desc')))
+    const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as FieldPhoto)
+    return attachRangers(rows)
   }
   // Offline: expose local (not yet uploaded) photos via object URLs.
-  const db = await getDB()
-  const locals = await db.getAll('photos')
+  const localDb = await getDB()
+  const locals = await localDb.getAll('photos')
   return locals.map((l) => ({
     ...l.meta,
     url: URL.createObjectURL(l.blob),
@@ -152,84 +187,119 @@ export async function getFieldPhotos(): Promise<FieldPhoto[]> {
 // ── Admin: forestries / work units / users ───────────────────────────────────
 
 export async function getForestries(): Promise<Forestry[]> {
-  if (!supabase) return []
-  const { data } = await supabase.from('forestries').select('*').order('name')
-  return (data ?? []) as Forestry[]
+  if (!db) return []
+  const snap = await getDocs(query(collection(db, 'forestries'), orderBy('name')))
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Forestry)
 }
 
 export async function createForestry(name: string): Promise<void> {
-  if (!supabase) throw new Error('offline')
-  const { error } = await supabase.from('forestries').insert({ name })
-  if (error) throw error
+  if (!db) throw new Error('offline')
+  const id = uuid()
+  await setDoc(doc(db, 'forestries', id), { name, created_at: new Date().toISOString() })
 }
 
 export async function getWorkUnits(): Promise<WorkUnit[]> {
-  if (!supabase) return []
-  const { data } = await supabase
-    .from('work_units')
-    .select('*, forestry:forestries(*)')
-    .order('name')
-  return (data ?? []) as WorkUnit[]
+  if (!db) return []
+  const snap = await getDocs(query(collection(db, 'work_units'), orderBy('name')))
+  const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as WorkUnit)
+  const forestries = await fetchForestriesByIds(rows.map((r) => r.forestry_id))
+  return rows.map((r) => ({ ...r, forestry: forestries.get(r.forestry_id) }))
+}
+
+async function fetchForestriesByIds(ids: string[]): Promise<Map<string, Forestry>> {
+  const map = new Map<string, Forestry>()
+  if (!db || ids.length === 0) return map
+  const unique = [...new Set(ids)]
+  for (let i = 0; i < unique.length; i += 30) {
+    const chunk = unique.slice(i, i + 30)
+    const snap = await getDocs(
+      query(collection(db, 'forestries'), where(documentId(), 'in', chunk)),
+    )
+    for (const d of snap.docs) map.set(d.id, { id: d.id, ...d.data() } as Forestry)
+  }
+  return map
 }
 
 export async function createWorkUnit(forestryId: string, name: string): Promise<void> {
-  if (!supabase) throw new Error('offline')
-  const { error } = await supabase.from('work_units').insert({ forestry_id: forestryId, name })
-  if (error) throw error
+  if (!db) throw new Error('offline')
+  const id = uuid()
+  await setDoc(doc(db, 'work_units', id), {
+    forestry_id: forestryId,
+    name,
+    foreman_id: null,
+    created_at: new Date().toISOString(),
+  })
 }
 
 export async function getProfiles(): Promise<Profile[]> {
-  if (!supabase) return []
-  const { data } = await supabase
-    .from('profiles')
-    .select('*, work_unit:work_units(*, forestry:forestries(*))')
-    .order('full_name')
-  return (data ?? []) as Profile[]
+  if (!db) return []
+  const snap = await getDocs(query(collection(db, 'profiles'), orderBy('full_name')))
+  const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Profile)
+  const workUnits = await fetchWorkUnitsByIds(rows.map((r) => r.work_unit_id).filter((id): id is string => !!id))
+  return rows.map((r) => ({ ...r, work_unit: r.work_unit_id ? workUnits.get(r.work_unit_id) : undefined }))
+}
+
+async function fetchWorkUnitsByIds(ids: string[]): Promise<Map<string, WorkUnit>> {
+  const map = new Map<string, WorkUnit>()
+  if (!db || ids.length === 0) return map
+  const unique = [...new Set(ids)]
+  for (let i = 0; i < unique.length; i += 30) {
+    const chunk = unique.slice(i, i + 30)
+    const snap = await getDocs(
+      query(collection(db, 'work_units'), where(documentId(), 'in', chunk)),
+    )
+    for (const d of snap.docs) map.set(d.id, { id: d.id, ...d.data() } as WorkUnit)
+  }
+  const forestries = await fetchForestriesByIds([...map.values()].map((w) => w.forestry_id))
+  for (const wu of map.values()) wu.forestry = forestries.get(wu.forestry_id)
+  return map
 }
 
 export async function getRangersForSupervisor(supervisorId: string): Promise<Profile[]> {
-  if (!supabase) return []
-  const { data } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('supervisor_id', supervisorId)
-    .eq('role', 'ranger')
-    .eq('active', true)
-    .order('full_name')
-  return (data ?? []) as Profile[]
+  if (!db) return []
+  const snap = await getDocs(
+    query(
+      collection(db, 'profiles'),
+      where('supervisor_id', '==', supervisorId),
+      where('role', '==', 'ranger'),
+      where('active', '==', true),
+      orderBy('full_name'),
+    ),
+  )
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Profile)
 }
 
 /** Active poslovođe — used for the admin's reassignment dropdown. */
 export async function getForemen(): Promise<Profile[]> {
-  if (!supabase) return []
-  const { data } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('role', 'foreman')
-    .eq('active', true)
-    .order('full_name')
-  return (data ?? []) as Profile[]
+  if (!db) return []
+  const snap = await getDocs(
+    query(
+      collection(db, 'profiles'),
+      where('role', '==', 'foreman'),
+      where('active', '==', true),
+      orderBy('full_name'),
+    ),
+  )
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Profile)
 }
 
 export async function updateProfile(id: string, patch: Partial<Profile>): Promise<void> {
-  if (!supabase) throw new Error('offline')
-  const { error } = await supabase.from('profiles').update(patch).eq('id', id)
-  if (error) throw error
+  if (!db) throw new Error('offline')
+  await updateDoc(doc(db, 'profiles', id), patch)
 }
 
-/** Poslovođa kreira nalog lugara (username + početna šifra) preko Edge funkcije. */
+/** Poslovođa kreira nalog lugara (username + početna šifra) preko Cloud Function-a. */
 export async function createRanger(input: {
   full_name: string
   username: string
   password: string
 }): Promise<{ id: string; username: string }> {
-  if (!supabase) throw new Error('offline')
-  const { data, error } = await supabase.functions.invoke<{
-    id?: string
-    username?: string
-    error?: string
-  }>('create-ranger', { body: input })
-  if (error) throw new Error(error.message)
+  if (!functions) throw new Error('offline')
+  const call = httpsCallable<
+    typeof input,
+    { id?: string; username?: string; error?: string }
+  >(functions, 'createRanger')
+  const { data } = await call(input)
   if (!data || data.error || !data.id || !data.username) {
     throw new Error(data?.error ?? 'Kreiranje naloga nije uspjelo')
   }
@@ -239,31 +309,43 @@ export async function createRanger(input: {
 // ── Tasks ────────────────────────────────────────────────────────────────────
 
 export async function getTasksForRanger(rangerId: string): Promise<RangerTask[]> {
-  if (!supabase) return []
-  const { data } = await supabase
-    .from('ranger_tasks')
-    .select('*')
-    .eq('ranger_id', rangerId)
-    .order('created_at', { ascending: false })
-  return (data ?? []) as RangerTask[]
+  if (!db) return []
+  const snap = await getDocs(
+    query(
+      collection(db, 'ranger_tasks'),
+      where('ranger_id', '==', rangerId),
+      orderBy('created_at', 'desc'),
+    ),
+  )
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as RangerTask)
 }
 
 export async function getTasksForForeman(foremanId: string): Promise<RangerTask[]> {
-  if (!supabase) return []
-  const { data } = await supabase
-    .from('ranger_tasks')
-    .select('*, ranger:profiles!ranger_tasks_ranger_id_fkey(*)')
-    .eq('foreman_id', foremanId)
-    .order('created_at', { ascending: false })
-  return (data ?? []) as RangerTask[]
+  if (!db) return []
+  const snap = await getDocs(
+    query(
+      collection(db, 'ranger_tasks'),
+      where('foreman_id', '==', foremanId),
+      orderBy('created_at', 'desc'),
+    ),
+  )
+  const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as RangerTask)
+  return attachRangers(rows)
 }
 
 export async function createTask(
   task: Omit<RangerTask, 'id' | 'created_at' | 'status' | 'completed_at' | 'completed_lat' | 'completed_lng'>,
 ): Promise<void> {
-  if (!supabase) throw new Error('offline')
-  const { error } = await supabase.from('ranger_tasks').insert({ ...task, status: 'pending' })
-  if (error) throw error
+  if (!db) throw new Error('offline')
+  const id = uuid()
+  await setDoc(doc(db, 'ranger_tasks', id), {
+    ...task,
+    status: 'pending',
+    completed_at: null,
+    completed_lat: null,
+    completed_lng: null,
+    created_at: new Date().toISOString(),
+  })
 }
 
 export async function completeTask(
@@ -282,35 +364,42 @@ export async function completeTask(
 // ── Notifications ────────────────────────────────────────────────────────────
 
 export async function getNotifications(recipientId: string): Promise<AppNotification[]> {
-  if (!supabase) return []
-  const { data } = await supabase
-    .from('notifications')
-    .select('*')
-    .eq('recipient_id', recipientId)
-    .order('created_at', { ascending: false })
-    .limit(50)
-  return (data ?? []) as AppNotification[]
+  if (!db) return []
+  const snap = await getDocs(
+    query(
+      collection(db, 'notifications'),
+      where('recipient_id', '==', recipientId),
+      orderBy('created_at', 'desc'),
+      fbLimit(50),
+    ),
+  )
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as AppNotification)
 }
 
 export async function markNotificationRead(id: string): Promise<void> {
-  if (!supabase) return
-  await supabase.from('notifications').update({ read: true }).eq('id', id)
+  if (!db) return
+  await updateDoc(doc(db, 'notifications', id), { read: true })
 }
 
 // ── Daily report helper ──────────────────────────────────────────────────────
 
 export async function getTodayShiftForRanger(rangerId: string): Promise<WorkShift | null> {
   const date = todayISO()
-  if (supabase) {
-    const { data } = await supabase
-      .from('work_shifts')
-      .select('*')
-      .eq('ranger_id', rangerId)
-      .eq('work_date', date)
-      .maybeSingle()
-    if (data) return data as WorkShift
+  if (db) {
+    const snap = await getDocs(
+      query(
+        collection(db, 'work_shifts'),
+        where('ranger_id', '==', rangerId),
+        where('work_date', '==', date),
+        fbLimit(1),
+      ),
+    )
+    if (!snap.empty) {
+      const d = snap.docs[0]
+      return { id: d.id, ...d.data() } as WorkShift
+    }
   }
-  const db = await getDB()
-  const all = await db.getAllFromIndex('shifts', 'by-ranger', rangerId)
+  const localDb = await getDB()
+  const all = await localDb.getAllFromIndex('shifts', 'by-ranger', rangerId)
   return all.find((s) => s.work_date === date) ?? null
 }

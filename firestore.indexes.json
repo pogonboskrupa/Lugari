@@ -1,0 +1,65 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "work_shifts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ranger_id", "order": "ASCENDING" },
+        { "fieldPath": "work_date", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "logbook_entries",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ranger_id", "order": "ASCENDING" },
+        { "fieldPath": "entry_date", "order": "DESCENDING" },
+        { "fieldPath": "entry_time", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "ranger_tasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ranger_id", "order": "ASCENDING" },
+        { "fieldPath": "created_at", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "ranger_tasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "foreman_id", "order": "ASCENDING" },
+        { "fieldPath": "created_at", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "recipient_id", "order": "ASCENDING" },
+        { "fieldPath": "created_at", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "profiles",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "supervisor_id", "order": "ASCENDING" },
+        { "fieldPath": "role", "order": "ASCENDING" },
+        { "fieldPath": "active", "order": "ASCENDING" },
+        { "fieldPath": "full_name", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "profiles",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "role", "order": "ASCENDING" },
+        { "fieldPath": "active", "order": "ASCENDING" },
+        { "fieldPath": "full_name", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
