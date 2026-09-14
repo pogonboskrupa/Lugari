@@ -189,7 +189,7 @@ export function ForemanDashboard() {
               </TableCell>
               <TableCell>{formatTime(shift.started_at)}</TableCell>
               <TableCell className="max-w-[220px] truncate">
-                {locations[shift.id] ?? shift.departments_visited.join(', ') ?? '—'}
+                {locations[shift.id] || shift.departments_visited.join(', ') || '—'}
               </TableCell>
               <TableCell className="tabular-nums">{formatKm(shift.distance_m)}</TableCell>
               <TableCell className="tabular-nums">

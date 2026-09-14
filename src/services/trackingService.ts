@@ -3,12 +3,14 @@ import { uuid, todayISO } from '@/lib/utils'
 import type { TrackPoint, WorkShift } from '@/types'
 import { computeTrackStats } from './analyticsService'
 import { analyzeTrackLocations, haversineM, loadDepartments } from './geoService'
-import { enqueueSync } from './syncService'
+import { enqueueSync, publishActiveShift } from './syncService'
 
 /** Record a point at least every 30 s… */
 const TIME_THRESHOLD_MS = 30_000
 /** …or every 20 m of movement, whichever comes first. */
 const DISTANCE_THRESHOLD_M = 20
+/** How often the in-progress shift is pushed to the foreman's live map. */
+const LIVE_PUBLISH_INTERVAL_MS = 60_000
 
 const ACTIVE_SHIFT_KEY = 'activeShift'
 
@@ -25,6 +27,7 @@ class TrackingService {
   private watchId: number | null = null
   private wakeLock: WakeLockSentinel | null = null
   private lastRecorded: TrackPoint | null = null
+  private lastPublishedAt = 0
   private listeners = new Set<PointListener>()
   private visibilityHandler = () => {
     if (document.visibilityState === 'visible') void this.acquireWakeLock()
@@ -62,7 +65,10 @@ class TrackingService {
     const db = await getDB()
     await db.clear('activeTrack')
     this.lastRecorded = null
+    this.lastPublishedAt = 0
     this.startWatching()
+    // Publish immediately so the foreman sees the ranger as active right away.
+    void this.publishLive(meta, [])
     return meta
   }
 
@@ -196,6 +202,33 @@ class TrackingService {
     const db = await getDB()
     await db.add('activeTrack', { ...point, shiftId: meta.id })
     for (const listener of this.listeners) listener(point)
+
+    if (Date.now() - this.lastPublishedAt >= LIVE_PUBLISH_INTERVAL_MS) {
+      this.lastPublishedAt = Date.now()
+      void this.publishLive(meta, await this.getActivePoints())
+    }
+  }
+
+  /** Pushes the in-progress shift so the foreman's live map can follow along. */
+  private async publishLive(meta: ActiveShiftMeta, points: TrackPoint[]): Promise<void> {
+    const stats = computeTrackStats(points)
+    await publishActiveShift({
+      id: meta.id,
+      ranger_id: meta.ranger_id,
+      work_date: meta.work_date,
+      started_at: meta.started_at,
+      ended_at: null,
+      status: 'active',
+      distance_m: Math.round(stats.distanceM),
+      duration_ms: stats.durationMs,
+      avg_speed_kmh: Number(stats.avgSpeedKmh.toFixed(2)),
+      max_speed_kmh: Number(stats.maxSpeedKmh.toFixed(2)),
+      points,
+      departments_visited: [],
+      time_in_departments_ms: 0,
+      time_at_landing_ms: 0,
+      time_outside_ms: 0,
+    })
   }
 }
 

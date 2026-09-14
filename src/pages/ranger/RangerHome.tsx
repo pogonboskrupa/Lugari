@@ -9,7 +9,6 @@ import { Dialog } from '@/components/ui/dialog'
 import { useAuthStore } from '@/store/authStore'
 import { useTrackingStore } from '@/store/trackingStore'
 import { formatDuration, formatKm, formatTime } from '@/lib/utils'
-import { notifyUser } from '@/services/notificationService'
 import { findGpsGaps } from '@/services/analyticsService'
 import type { WorkShift } from '@/types'
 
@@ -58,20 +57,10 @@ export function RangerHome() {
     setBusy(true)
     try {
       await stop()
+      // The foreman's notification is raised by the Firestore trigger once the
+      // shift reaches the server, so it survives finishing the day offline.
       const finished = useTrackingStore.getState().lastShift
-      if (finished) {
-        setSummary(finished)
-        const foremanId = profile.supervisor_id
-        if (foremanId) {
-          await notifyUser(
-            foremanId,
-            'shift_end',
-            'Završen radni dan',
-            `${profile.full_name} je završio radni dan (${formatKm(finished.distance_m)}).`,
-            finished.id,
-          ).catch(() => undefined)
-        }
-      }
+      if (finished) setSummary(finished)
     } finally {
       setBusy(false)
     }

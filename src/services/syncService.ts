@@ -72,27 +72,46 @@ export async function drainQueue(): Promise<void> {
   }
 }
 
+/** The Firestore representation of a shift (drops the joined `ranger` profile). */
+function shiftDoc(shift: WorkShift) {
+  return {
+    ranger_id: shift.ranger_id,
+    work_date: shift.work_date,
+    started_at: shift.started_at,
+    ended_at: shift.ended_at,
+    status: shift.status,
+    distance_m: shift.distance_m,
+    duration_ms: shift.duration_ms,
+    avg_speed_kmh: shift.avg_speed_kmh,
+    max_speed_kmh: shift.max_speed_kmh,
+    points: shift.points,
+    departments_visited: shift.departments_visited,
+    time_in_departments_ms: shift.time_in_departments_ms,
+    time_at_landing_ms: shift.time_at_landing_ms,
+    time_outside_ms: shift.time_outside_ms,
+  }
+}
+
+/**
+ * Best-effort upload of an in-progress shift so the foreman's live map sees it.
+ * Deliberately bypasses the durable queue: each snapshot supersedes the last and
+ * the authoritative write still happens through the queue when the shift ends.
+ */
+export async function publishActiveShift(shift: WorkShift): Promise<void> {
+  if (!db || !navigator.onLine) return
+  try {
+    await setDoc(doc(db, 'work_shifts', shift.id), shiftDoc(shift))
+  } catch {
+    // Live position is disposable — the end-of-shift write carries the real data.
+  }
+}
+
 async function pushItem(item: SyncQueueItem): Promise<void> {
   if (!db) throw new Error('offline')
   switch (item.entity) {
     case 'shift': {
       const shift = item.payload as WorkShift
-      await setDoc(doc(db, 'work_shifts', shift.id), {
-        ranger_id: shift.ranger_id,
-        work_date: shift.work_date,
-        started_at: shift.started_at,
-        ended_at: shift.ended_at,
-        status: shift.status,
-        distance_m: shift.distance_m,
-        duration_ms: shift.duration_ms,
-        avg_speed_kmh: shift.avg_speed_kmh,
-        max_speed_kmh: shift.max_speed_kmh,
-        points: shift.points,
-        departments_visited: shift.departments_visited,
-        time_in_departments_ms: shift.time_in_departments_ms,
-        time_at_landing_ms: shift.time_at_landing_ms,
-        time_outside_ms: shift.time_outside_ms,
-      })
+      await setDoc(doc(db, 'work_shifts', shift.id), shiftDoc(shift))
       break
     }
     case 'logbook': {

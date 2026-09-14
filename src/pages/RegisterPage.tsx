@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
-import { createUserWithEmailAndPassword } from 'firebase/auth'
+import { createUserWithEmailAndPassword, signOut } from 'firebase/auth'
 import { doc, setDoc } from 'firebase/firestore'
 import { requireAuth, requireDb } from '@/lib/firebase'
 
@@ -46,6 +46,9 @@ export function RegisterPage() {
         username: null,
         supervisor_id: null,
       })
+      // Firebase signs the new user in automatically; the account is not
+      // approved yet, so drop the session rather than leave them half-in.
+      await signOut(auth)
       setDone(true)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Registracija nije uspjela')

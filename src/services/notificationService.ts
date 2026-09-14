@@ -1,10 +1,10 @@
-import { addDoc, collection, onSnapshot, orderBy, query, where } from 'firebase/firestore'
+import { collection, onSnapshot, orderBy, query, where } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
-import type { AppNotificationType } from '@/types'
 
 /**
- * Notifications: docs in the `notifications` collection (delivered in-app via
- * a Firestore realtime listener) plus a local Web Notification when permitted.
+ * Notifications: docs in the `notifications` collection, written server-side by
+ * the Cloud Functions triggers and delivered in-app via a Firestore realtime
+ * listener, plus a local Web Notification when permitted.
  */
 
 export async function requestNotificationPermission(): Promise<boolean> {
@@ -22,25 +22,6 @@ export function showLocalNotification(title: string, body: string): void {
       // Some Android WebViews only allow notifications through the SW registration.
     }
   }
-}
-
-export async function notifyUser(
-  recipientId: string,
-  type: AppNotificationType,
-  title: string,
-  body: string,
-  refId: string | null = null,
-): Promise<void> {
-  if (!db) return
-  await addDoc(collection(db, 'notifications'), {
-    recipient_id: recipientId,
-    type,
-    title,
-    body,
-    ref_id: refId,
-    read: false,
-    created_at: new Date().toISOString(),
-  })
 }
 
 /** Subscribes to realtime notifications for the given user. Returns unsubscribe fn. */

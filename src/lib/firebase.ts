@@ -1,6 +1,11 @@
 import { initializeApp, type FirebaseApp } from 'firebase/app'
 import { getAuth, type Auth } from 'firebase/auth'
-import { getFirestore, type Firestore } from 'firebase/firestore'
+import {
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+  type Firestore,
+} from 'firebase/firestore'
 import { getStorage, type FirebaseStorage } from 'firebase/storage'
 import { getFunctions, type Functions } from 'firebase/functions'
 
@@ -28,7 +33,13 @@ const app: FirebaseApp | null =
  * backend), these are all null and services fall back to offline/IndexedDB-only mode.
  */
 export const auth: Auth | null = app ? getAuth(app) : null
-export const db: Firestore | null = app ? getFirestore(app) : null
+
+/** Persistent cache keeps reads working in the forest, where there is no signal. */
+export const db: Firestore | null = app
+  ? initializeFirestore(app, {
+      localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+    })
+  : null
 export const storage: FirebaseStorage | null = app ? getStorage(app) : null
 export const functions: Functions | null = app ? getFunctions(app) : null
 

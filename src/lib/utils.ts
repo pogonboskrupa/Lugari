@@ -33,8 +33,10 @@ export function formatDate(iso: string | null | undefined): string {
   return d.toLocaleDateString('bs-BA', { day: '2-digit', month: '2-digit', year: 'numeric' })
 }
 
+/** Local calendar date (YYYY-MM-DD) — never UTC, or shifts logged after midnight land on the wrong day. */
 export function todayISO(): string {
-  return new Date().toISOString().slice(0, 10)
+  const now = new Date()
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 10)
 }
 
 /** Deterministic distinct color per ranger (used for track polylines). */

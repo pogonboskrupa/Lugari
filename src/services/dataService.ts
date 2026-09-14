@@ -9,6 +9,7 @@ import {
   setDoc,
   updateDoc,
   where,
+  type QueryConstraint,
 } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
 import { getDB } from '@/lib/db'
@@ -22,6 +23,7 @@ import type {
   LogbookEntry,
   Profile,
   RangerTask,
+  UserRole,
   WorkShift,
   WorkUnit,
 } from '@/types'
@@ -31,6 +33,72 @@ import { enqueueSync } from './syncService'
  * Data access layer. Reads prefer Firestore and fall back to IndexedDB;
  * writes always land in IndexedDB first and are synced via the queue.
  */
+
+// ── Query scope ──────────────────────────────────────────────────────────────
+
+/**
+ * Firestore security rules are not filters: a query that *could* return one
+ * document the viewer may not read fails entirely, rather than silently
+ * dropping that document. So every collection-wide read has to be narrowed to
+ * the rangers the viewer is allowed to see, instead of filtering client-side.
+ */
+
+/** Max values allowed in a Firestore `in` filter. */
+const IN_LIMIT = 30
+
+let viewer: { id: string; role: UserRole } | null = null
+let supervisedIds: string[] | null = null
+
+/** Call whenever the signed-in profile changes so scoped reads stay correct. */
+export function setDataViewer(profile: Profile | null): void {
+  viewer = profile ? { id: profile.id, role: profile.role } : null
+  supervisedIds = null
+}
+
+/** Ranger ids the viewer may read, or null when unconstrained (admin). */
+async function visibleRangerIds(): Promise<string[] | null> {
+  if (!viewer) return []
+  if (viewer.role === 'admin') return null
+  if (viewer.role === 'ranger') return [viewer.id]
+  if (!supervisedIds) {
+    if (!db) return []
+    // Includes deactivated rangers so their history stays visible to the foreman.
+    const snap = await getDocs(
+      query(
+        collection(db, 'profiles'),
+        where('supervisor_id', '==', viewer.id),
+        where('role', '==', 'ranger'),
+      ),
+    )
+    supervisedIds = snap.docs.map((d) => d.id)
+  }
+  return supervisedIds
+}
+
+/** Runs a ranger-scoped query, splitting into chunks of 30 and merging results. */
+async function runScoped<T extends { id: string }>(
+  path: string,
+  extra: QueryConstraint[],
+  sort?: (a: T, b: T) => number,
+): Promise<T[]> {
+  if (!db) return []
+  const ids = await visibleRangerIds()
+  if (ids !== null && ids.length === 0) return []
+
+  const scopes: QueryConstraint[][] =
+    ids === null
+      ? [[]]
+      : Array.from({ length: Math.ceil(ids.length / IN_LIMIT) }, (_, i) => [
+          where('ranger_id', 'in', ids.slice(i * IN_LIMIT, (i + 1) * IN_LIMIT)),
+        ])
+
+  const rows: T[] = []
+  for (const scope of scopes) {
+    const snap = await getDocs(query(collection(db, path), ...scope, ...extra))
+    for (const d of snap.docs) rows.push({ id: d.id, ...d.data() } as T)
+  }
+  return sort ? rows.sort(sort) : rows
+}
 
 // ── Joins (Firestore has none — batch-fetch and attach) ─────────────────────
 
@@ -55,11 +123,12 @@ async function attachRangers<T extends { ranger_id: string }>(rows: T[]): Promis
 
 export async function getShiftsForDate(date: string): Promise<WorkShift[]> {
   if (db) {
-    const snap = await getDocs(
-      query(collection(db, 'work_shifts'), where('work_date', '==', date)),
-    )
-    const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as WorkShift)
-    return attachRangers(rows)
+    try {
+      const rows = await runScoped<WorkShift>('work_shifts', [where('work_date', '==', date)])
+      return await attachRangers(rows)
+    } catch {
+      // Offline or unreachable — fall through to the local cache.
+    }
   }
   const localDb = await getDB()
   return localDb.getAllFromIndex('shifts', 'by-date', date)
@@ -67,16 +136,16 @@ export async function getShiftsForDate(date: string): Promise<WorkShift[]> {
 
 export async function getShiftsInRange(from: string, to: string): Promise<WorkShift[]> {
   if (db) {
-    const snap = await getDocs(
-      query(
-        collection(db, 'work_shifts'),
-        where('work_date', '>=', from),
-        where('work_date', '<=', to),
-        orderBy('work_date', 'desc'),
-      ),
-    )
-    const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as WorkShift)
-    return attachRangers(rows)
+    try {
+      const rows = await runScoped<WorkShift>(
+        'work_shifts',
+        [where('work_date', '>=', from), where('work_date', '<=', to), orderBy('work_date', 'desc')],
+        (a, b) => b.work_date.localeCompare(a.work_date),
+      )
+      return await attachRangers(rows)
+    } catch {
+      // Offline or unreachable — fall through to the local cache.
+    }
   }
   const localDb = await getDB()
   const all = await localDb.getAll('shifts')
@@ -87,15 +156,19 @@ export async function getShiftsInRange(from: string, to: string): Promise<WorkSh
 
 export async function getShiftsForRanger(rangerId: string, limitCount = 30): Promise<WorkShift[]> {
   if (db) {
-    const snap = await getDocs(
-      query(
-        collection(db, 'work_shifts'),
-        where('ranger_id', '==', rangerId),
-        orderBy('work_date', 'desc'),
-        fbLimit(limitCount),
-      ),
-    )
-    return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as WorkShift)
+    try {
+      const snap = await getDocs(
+        query(
+          collection(db, 'work_shifts'),
+          where('ranger_id', '==', rangerId),
+          orderBy('work_date', 'desc'),
+          fbLimit(limitCount),
+        ),
+      )
+      return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as WorkShift)
+    } catch {
+      // Offline or unreachable — fall through to the local cache.
+    }
   }
   const localDb = await getDB()
   const all = await localDb.getAllFromIndex('shifts', 'by-ranger', rangerId)
@@ -147,9 +220,16 @@ export async function createIncident(
 
 export async function getIncidents(): Promise<Incident[]> {
   if (db) {
-    const snap = await getDocs(query(collection(db, 'incidents'), orderBy('created_at', 'desc')))
-    const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Incident)
-    return attachRangers(rows)
+    try {
+      const rows = await runScoped<Incident>(
+        'incidents',
+        [orderBy('created_at', 'desc')],
+        (a, b) => b.created_at.localeCompare(a.created_at),
+      )
+      return await attachRangers(rows)
+    } catch {
+      // Offline or unreachable — fall through to the local cache.
+    }
   }
   const localDb = await getDB()
   const all = await localDb.getAll('incidents')
@@ -171,9 +251,16 @@ export async function saveFieldPhoto(
 
 export async function getFieldPhotos(): Promise<FieldPhoto[]> {
   if (db) {
-    const snap = await getDocs(query(collection(db, 'field_photos'), orderBy('taken_at', 'desc')))
-    const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as FieldPhoto)
-    return attachRangers(rows)
+    try {
+      const rows = await runScoped<FieldPhoto>(
+        'field_photos',
+        [orderBy('taken_at', 'desc')],
+        (a, b) => b.taken_at.localeCompare(a.taken_at),
+      )
+      return await attachRangers(rows)
+    } catch {
+      // Offline or unreachable — fall through to the local cache.
+    }
   }
   // Offline: expose local (not yet uploaded) photos via object URLs.
   const localDb = await getDB()

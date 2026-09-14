@@ -1,4 +1,6 @@
-import { booleanPointInPolygon, point } from '@turf/turf'
+// Granularni importi — `@turf/turf` bi uvukao cijelu biblioteku u bundle.
+import booleanPointInPolygon from '@turf/boolean-point-in-polygon'
+import { point } from '@turf/helpers'
 import type { Feature, FeatureCollection, MultiPolygon, Polygon } from 'geojson'
 import { departmentLabel, type DepartmentProperties, type LocationStatus, type TrackPoint } from '@/types'
 

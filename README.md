@@ -80,6 +80,25 @@ Kolekcije u Firestore-u (ravna struktura, bez šema): `forestries`, `work_units`
 `profiles` (id = Firebase Auth uid), `work_shifts`, `logbook_entries`,
 `incidents`, `field_photos`, `ranger_tasks`, `notifications`.
 
+### Važno: Firestore pravila nisu filteri
+
+Za razliku od Postgres RLS-a, Firestore **ne izbacuje** zabranjene dokumente iz
+rezultata — cijeli upit padne ako bi mogao vratiti i jedan dokument koji
+korisnik ne smije pročitati. Zato svako čitanje cijele kolekcije u
+`dataService.ts` mora biti suženo na lugare koje korisnik smije vidjeti
+(`visibleRangerIds()` → `where('ranger_id','in',…)`); admin čita neograničeno.
+Ako dodajete novi upit nad `work_shifts`, `incidents`, `field_photos` ili
+`logbook_entries`, provucite ga kroz `runScoped()`.
+
+### Testovi sigurnosnih pravila
+
+```bash
+npm run test:rules   # pokreće Firestore emulator (potrebna Java) i testira pravila
+```
+
+Testovi (`tests/firestore-rules.test.mjs`) pokrivaju izolaciju između poslovođa,
+samoregistraciju, potvrdu zadataka i gore opisano ponašanje upita.
+
 ### Tok kreiranja korisnika (bez daljeg ručnog rada admina)
 
 - **Poslovođa uzgoja** se sam registruje na `/registracija` (ime, email,

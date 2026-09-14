@@ -23,10 +23,27 @@ service cloud.firestore {
       return isSignedIn() && myRole() == 'foreman';
     }
 
-    /** True if `rangerId` reports to the signed-in foreman. */
+    // True if `rangerId` reports to the signed-in foreman.
     function supervises(rangerId) {
       return isForeman()
         && get(/databases/$(database)/documents/profiles/$(rangerId)).data.supervisor_id == request.auth.uid;
+    }
+
+    // Ranger-owned record: own data only, and an update may not seize someone else's document.
+    function ownRangerCreate() {
+      return isSignedIn() && request.resource.data.ranger_id == request.auth.uid;
+    }
+
+    function ownRangerUpdate() {
+      return isSignedIn()
+        && resource.data.ranger_id == request.auth.uid
+        && request.resource.data.ranger_id == request.auth.uid;
+    }
+
+    function readableRangerRecord() {
+      return isSignedIn() && (
+        resource.data.ranger_id == request.auth.uid || isAdmin() || supervises(resource.data.ranger_id)
+      );
     }
 
     // ── Organizacija: svi prijavljeni čitaju, samo admin piše ──────────────────
@@ -54,34 +71,30 @@ service cloud.firestore {
 
     // ── Radni dani (GPS tragovi): lugar svoje; poslovođa svoju grupu; admin sve ─
     match /work_shifts/{id} {
-      allow read: if isSignedIn() && (
-        resource.data.ranger_id == request.auth.uid || isAdmin() || supervises(resource.data.ranger_id)
-      );
-      allow create, update: if isSignedIn() && request.resource.data.ranger_id == request.auth.uid;
+      allow read: if readableRangerRecord();
+      allow create: if ownRangerCreate();
+      allow update: if ownRangerUpdate();
     }
 
     // ── Službena knjiga ─────────────────────────────────────────────────────────
     match /logbook_entries/{id} {
-      allow read: if isSignedIn() && (
-        resource.data.ranger_id == request.auth.uid || isAdmin() || supervises(resource.data.ranger_id)
-      );
-      allow create, update: if isSignedIn() && request.resource.data.ranger_id == request.auth.uid;
+      allow read: if readableRangerRecord();
+      allow create: if ownRangerCreate();
+      allow update: if ownRangerUpdate();
     }
 
     // ── Prijave ──────────────────────────────────────────────────────────────────
     match /incidents/{id} {
-      allow read: if isSignedIn() && (
-        resource.data.ranger_id == request.auth.uid || isAdmin() || supervises(resource.data.ranger_id)
-      );
-      allow create, update: if isSignedIn() && request.resource.data.ranger_id == request.auth.uid;
+      allow read: if readableRangerRecord();
+      allow create: if ownRangerCreate();
+      allow update: if ownRangerUpdate();
     }
 
     // ── Fotografije ──────────────────────────────────────────────────────────────
     match /field_photos/{id} {
-      allow read: if isSignedIn() && (
-        resource.data.ranger_id == request.auth.uid || isAdmin() || supervises(resource.data.ranger_id)
-      );
-      allow create, update: if isSignedIn() && request.resource.data.ranger_id == request.auth.uid;
+      allow read: if readableRangerRecord();
+      allow create: if ownRangerCreate();
+      allow update: if ownRangerUpdate();
     }
 
     // ── Zadaci: poslovođa kreira i vidi svoje; lugar vidi i potvrđuje svoje ─────
@@ -90,15 +103,19 @@ service cloud.firestore {
         resource.data.ranger_id == request.auth.uid || resource.data.foreman_id == request.auth.uid || isAdmin()
       );
       allow create: if isForeman() && request.resource.data.foreman_id == request.auth.uid;
-      allow update: if isSignedIn() && (
-        resource.data.foreman_id == request.auth.uid || resource.data.ranger_id == request.auth.uid
-      );
+      // Zadatak ostaje vezan za isti par poslovođa↔lugar — lugar potvrđuje
+      // izvršenje, ali ga ne može preusmjeriti na drugoga.
+      allow update: if isSignedIn()
+        && (resource.data.foreman_id == request.auth.uid || resource.data.ranger_id == request.auth.uid)
+        && request.resource.data.ranger_id == resource.data.ranger_id
+        && request.resource.data.foreman_id == resource.data.foreman_id;
     }
 
-    // ── Obavijesti: primalac čita/označava; svako prijavljeno može ubaciti ──────
+    // ── Obavijesti: primalac čita i označava pročitano; upisuju ih isključivo
+    //    Cloud Functions trigeri (Admin SDK zaobilazi pravila), pa klijent ne
+    //    može slati obavijesti drugim korisnicima.
     match /notifications/{id} {
       allow read: if isSignedIn() && resource.data.recipient_id == request.auth.uid;
-      allow create: if isSignedIn();
       allow update: if isSignedIn() && resource.data.recipient_id == request.auth.uid;
     }
   }

@@ -3,6 +3,7 @@ import { onAuthStateChanged, signInWithEmailAndPassword, signOut as fbSignOut } 
 import { doc, getDoc } from 'firebase/firestore'
 import { auth, db } from '@/lib/firebase'
 import { kvGet, kvSet, kvDelete } from '@/lib/db'
+import { setDataViewer } from '@/services/dataService'
 import type { Profile, WorkUnit, Forestry } from '@/types'
 
 interface AuthState {
@@ -53,8 +54,18 @@ export const useAuthStore = create<AuthState>((set) => ({
         })
         if (userId) {
           const profile = await fetchProfile(userId)
+          // An account awaiting approval (or since deactivated) must not slip in
+          // through a restored session — signIn is not the only way in.
+          if (profile && !profile.active) {
+            await fbSignOut(auth)
+            await kvDelete(PROFILE_CACHE_KEY)
+            setDataViewer(null)
+            set({ profile: null, loading: false })
+            return
+          }
           if (profile) {
             await kvSet(PROFILE_CACHE_KEY, profile)
+            setDataViewer(profile)
             set({ profile, loading: false })
             return
           }
@@ -62,9 +73,11 @@ export const useAuthStore = create<AuthState>((set) => ({
       }
       // Offline or no session — use the cached profile so the ranger can keep working.
       const cached = await kvGet<Profile>(PROFILE_CACHE_KEY)
+      setDataViewer(cached ?? null)
       set({ profile: cached ?? null, loading: false })
     } catch {
       const cached = await kvGet<Profile>(PROFILE_CACHE_KEY)
+      setDataViewer(cached ?? null)
       set({ profile: cached ?? null, loading: false })
     }
   },
@@ -80,14 +93,19 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
     const profile = await fetchProfile(userId)
     if (!profile) throw new Error('Korisnički profil ne postoji')
-    if (!profile.active) throw new Error('Korisnički nalog je deaktiviran')
+    if (!profile.active) {
+      await fbSignOut(auth)
+      throw new Error('Korisnički nalog čeka odobrenje ili je deaktiviran')
+    }
     await kvSet(PROFILE_CACHE_KEY, profile)
+    setDataViewer(profile)
     set({ profile })
   },
 
   signOut: async () => {
     if (auth) await fbSignOut(auth)
     await kvDelete(PROFILE_CACHE_KEY)
+    setDataViewer(null)
     set({ profile: null })
   },
 
@@ -110,6 +128,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       supervisor_id: null,
     }
     await kvSet(PROFILE_CACHE_KEY, demo)
+    setDataViewer(demo)
     set({ profile: demo })
   },
 }))

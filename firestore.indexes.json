@@ -18,6 +18,22 @@
       ]
     },
     {
+      "collectionGroup": "incidents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ranger_id", "order": "ASCENDING" },
+        { "fieldPath": "created_at", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "field_photos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ranger_id", "order": "ASCENDING" },
+        { "fieldPath": "taken_at", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "ranger_tasks",
       "queryScope": "COLLECTION",
       "fields": [
